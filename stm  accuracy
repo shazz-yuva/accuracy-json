@@ -1,0 +1,100 @@
+import os
+import json
+from typing import List
+from dotenv import load_dotenv
+from pydantic import BaseModel
+from groq import Groq
+
+# Load environment variables
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    raise ValueError("Missing GROQ_API_KEY in your .env file.")
+
+# Initialize Groq client
+client = Groq(api_key=GROQ_API_KEY)
+
+# ----------------------
+# Pydantic Data Models
+# ----------------------
+class ThoughtEntry(BaseModel):
+    entry: int
+    title: str
+    description: str
+
+class accuracyResponse(BaseModel):
+    entries: List[ThoughtEntry]
+
+# ----------------------
+# Prompt Builder
+# ----------------------
+def build_prompt(user_input: str) -> List[dict]:
+    system_instruction = """
+You are a precise assistant that transforms a stream-of-consciousness journal entry into structured JSON.
+
+Instructions:
+- Break the entry into clear, individual thoughts or activities.
+- For each:
+    - Add a "title" with a short summary (include time if mentioned).
+    - Add a "description" that fully explains that entry as a sentence.
+- Output must be in strict JSON format like:
+[
+  {
+    "entry": 1,
+    "title": "Event title",
+    "description": "Detailed summary."
+  },
+  ...
+]
+Do not include anything else in the output. Only JSON array of entries.
+"""
+    return [
+        {"role": "system", "content": system_instruction},
+        {"role": "user", "content": user_input}
+    ]
+
+# ----------------------
+# LLM Output Generation
+# ----------------------
+def get_structured_entries(user_input: str) -> List[ThoughtEntry]:
+    messages = build_prompt(user_input)
+
+    response = client.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=messages,
+        temperature=0.3,
+        max_tokens=2048
+    )
+
+    raw_output = response.choices[0].message.content.strip()
+
+    try:
+        json_data = json.loads(raw_output)
+        return [ThoughtEntry(**entry) for entry in json_data]
+    except json.JSONDecodeError:
+        print("Output was not valid JSON. Showing raw model output:\n")
+        print(raw_output)
+        return []
+    except Exception as e:
+        print(" Error during output parsing:", e)
+        return []
+
+# ----------------------
+# Main Execution Block
+# ----------------------
+def main():
+    user_input = input(" Enter your  thoughts:\n\n")
+    print("\n Processing...\n")
+    structured_entries = get_structured_entries(user_input)
+
+    if structured_entries:
+        response = accuracyResponse(entries=structured_entries)
+        print(" Structured Output:\n")
+    #    print(response.json(indent=2))
+        print(response.model_dump_json(indent=2))
+    
+    else:
+        print(" Could not generate structured output.")
+
+if __name__ == "__main__":
+    main()
